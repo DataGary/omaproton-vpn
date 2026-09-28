@@ -63,9 +63,10 @@ into the CLI's own prompt, and Proton's client owns the session from there.
 
 You don't need to be a Proton customer to use this. Proton VPN has a **free
 plan**: no data cap, no logs, no ads, run by Proton in Switzerland under Swiss
-privacy law. It gets you a handful of countries and standard speeds, which is
-plenty to be private on café Wi-Fi. Plus adds every country and city on the
-map, faster servers, and the P2P, Secure Core and Tor rows.
+privacy law. Proton picks a free server for you from a handful of countries,
+at standard speeds, which is plenty to be private on café Wi-Fi. Plus lets you
+choose any country and city on the map, and adds faster servers, Random, and
+the P2P, Secure Core and Tor rows.
 
 Make a free account at [proton.me/vpn](https://proton.me/vpn), then come back
 and click the Proton mark. Sign-in happens in the panel.
@@ -198,7 +199,10 @@ fills when the tunnel is up.
 | **Tor** | The fastest Tor-over-VPN server. Your traffic goes VPN first, then into the Tor network, so you can reach `.onion` sites from a normal browser. Noticeably slower. |
 
 Rows marked **PLUS** need a paid plan. On a free plan they fail with a clear
-"Requires a Proton VPN Plus plan", nothing breaks.
+message, nothing breaks. On a free account Random wears the tag too, and so
+does every country and city row: Proton's CLI doesn't let a free plan choose
+its location, so **Fastest** (or the power switch) is the way to connect, and
+Proton picks a free server for you.
 
 After a **P2P** connect the header reads "󰒗 P2P · US-TX#40" and the Server
 row "US-TX#40 · P2P", so you can see the click landed. Most Proton servers permit P2P, so the panel only makes a
@@ -298,7 +302,8 @@ Inside a country:
   any server in that country, which is the same as `protonvpn connect --country`.
 - **Every row below is one city**, showing the best server there right now with
   its current load and any tags: **Free** for free-plan servers, plus P2P, Tor,
-  or Streaming. Cities are ordered by Proton's own speed score, best first.
+  or Streaming. (On a free account these rows show **PLUS** instead, since
+  only Plus can pick a location.) Cities are ordered by Proton's own speed score, best first.
 
 The widget shows one row per city rather than one per server on purpose. Large
 countries have thousands of servers and the nearest city would monopolise the
