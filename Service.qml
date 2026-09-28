@@ -12,7 +12,9 @@ import "Model.js" as Model
 //     names its tunnel "ProtonVPN <server>" on device proton0, so this alone
 //     answers "are we up, and where" without paying for the Python CLI.
 //   * `protonvpn status` (~1s of Python start-up) runs only when the panel is
-//     open, on demand, and after an action, it supplies the detail rows.
+//     open, on demand, after an action, and when the tunnel comes or goes on
+//     its own. It supplies the detail rows, which only the panel shows, so
+//     nothing polls it while the panel is closed.
 //
 // `protonvpn connect` blocks for 30-60s, so every action is optimistic:
 // _desired pins the UI to the requested state until reality agrees.
@@ -258,7 +260,6 @@ Item {
     return configPendingValue === "off" ? "Turning off…" : "Turning on…"
   }
 
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 5, 3600)
   readonly property int watchIntervalSec: intSetting("watchIntervalSec", 4, 2, 60)
   readonly property bool notificationsOn: String(setting("notifications", "on")) !== "off"
 
@@ -1263,15 +1264,23 @@ Item {
 
   Timer {
     id: statusTimer
-    // Cheap enough to keep current while the panel is open; throttled back to
-    // the configured interval once it closes.
-    interval: (root.panelOpen ? 5 : root.refreshIntervalSec) * 1000
+    // Only while the panel is open, because everything `protonvpn status`
+    // feeds (the location, the detail rows, "Connecting…") is only shown
+    // there. The bar icon runs on nmcli, and a tunnel that comes or goes
+    // behind our back gets one refresh from the link watcher.
+    //
+    // Every run is a fresh Python process that opens a new Secret Service
+    // connection, because the CLI probes the keyring on every start. A poll
+    // with the panel closed showed nothing and fed gnome-keyring thousands
+    // of short-lived clients a day, enough to trip a race that aborts the
+    // daemon (#63).
+    interval: 5000
     repeat: true
     // Not while a connect or disconnect is running: `protonvpn connect`
     // blocks for 30-60s, and a 5s poll across that is where most of the
     // concurrent CLI processes used to come from. delayedRefresh pulls fresh
     // state 1.2s after the action finishes, so nothing is lost by waiting.
-    running: root.installed && root.signedIn && !root.busy
+    running: root.panelOpen && root.installed && root.signedIn && !root.busy
     onTriggered: root.refreshStatus()
   }
 
@@ -1406,6 +1415,12 @@ Item {
       // this guard that lands as "You're no longer protected" in the middle
       // of a connect the person just asked for.
       if (was && !link.active) {
+        // nmcli just watched the tunnel go. The status run below normally
+        // agrees a second later, but with no background poll to catch a
+        // failed one, a stale "connected" from the last run would keep the
+        // bar claiming Protected over no tunnel. The link is the fresher
+        // fact, and the next good status run corrects this either way.
+        root.statusConnected = false
         if (!root._expectDown && !actionProcess.running && !connectProcess.running)
           root.notify("VPN Disconnected \udb83\udfc6", "You're no longer protected.", "critical")
         root._expectDown = false

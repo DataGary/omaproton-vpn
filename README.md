@@ -639,7 +639,6 @@ Configurable from Omarchy's widget settings:
 | Setting | Default | What it controls |
 | --- | --- | --- |
 | Desktop notifications | On | "VPN Connected" with the server and protocol on connect; "VPN Disconnected" if the tunnel drops unexpectedly. Not shown while the panel is open, since the panel already says so. |
-| Status refresh interval | 30 s | How often `protonvpn status` runs for the detail rows while the panel is closed. Open panel: every 5 s. |
 | Link watch interval | 4 s | How often `nmcli` is polled for the bar icon. |
 
 **Protocol.** The one Proton setting the CLI doesn't expose. It lives in
@@ -724,7 +723,9 @@ server name; `debug` deliberately omits your account email. The email is shown
 only inside the panel.
 
 **Network activity.** The widget polls `nmcli` (local, no network) for the bar
-icon, and `protonvpn status` for the detail rows. `status` asks the Proton
+icon, and runs `protonvpn status` for the detail rows only while the panel is
+open, once after each connect or disconnect, and once when the tunnel comes up
+or goes down on its own. With the panel closed nothing polls it. `status` asks the Proton
 client for its server list, which the client refreshes from Proton's API only
 when its own cache has expired, server loads every ~15 minutes, the full list
 every ~3 hours, and only while connected. The widget's polling doesn't add API
@@ -744,7 +745,9 @@ screen-share that tab, it's visible.
 start-up, which is far too slow to poll for a bar icon. The tunnel also appears
 as an active NetworkManager connection named `ProtonVPN <server>` on device
 `proton0`, which `nmcli` reports in around ten milliseconds. The widget polls
-`nmcli` for the icon and only shells out to the CLI for the detail rows. Proton's
+`nmcli` for the icon and only shells out to the CLI for the detail rows. Every
+CLI run is a fresh Python process that opens a new connection to your keyring,
+so the widget keeps them rare: none on a timer while the panel is closed. Proton's
 IPv6 leak guard (`pvpn-killswitch-ipv6`, on a dummy device) stays active
 independently and is deliberately not counted as a live tunnel.
 
