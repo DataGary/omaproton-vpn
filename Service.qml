@@ -12,7 +12,9 @@ import "Model.js" as Model
 //     names its tunnel "ProtonVPN <server>" on device proton0, so this alone
 //     answers "are we up, and where" without paying for the Python CLI.
 //   * `protonvpn status` (~1s of Python start-up) runs only when the panel is
-//     open, on demand, and after an action, it supplies the detail rows.
+//     open, on demand, after an action, and when the tunnel comes or goes on
+//     its own. It supplies the detail rows, which only the panel shows, so
+//     nothing polls it while the panel is closed.
 //
 // `protonvpn connect` blocks for 30-60s, so every action is optimistic:
 // _desired pins the UI to the requested state until reality agrees.
@@ -39,6 +41,14 @@ Item {
   property bool accountProbed: false
   property string account: ""
   property string plan: ""
+  // The account's Proton tier from the client's server cache, -1 until read.
+  // On Free (0) the CLI refuses every connect that names a place or asks for
+  // Random: "Location selection is not available on the free plan". That is
+  // Proton's rule, not a check we can or should route around, so the panel
+  // says so up front with the same PLUS tag the paid features wear, and the
+  // automatic reconnects ask for Fastest, which is the one connect Free has.
+  property int maxTier: -1
+  readonly property bool freePlan: maxTier === 0
 
   // nmcli-derived, fast
   property bool linkActive: false
@@ -242,6 +252,32 @@ Item {
   property bool _wantConfig: false
   readonly property bool _probesPending: _wantStatus || _wantAccount || _wantCountries || _wantConfig
   readonly property bool refreshing: statusProcess.running
+
+  // Every read-only probe runs under coreutils `timeout`, because a CLI that
+  // never returns would otherwise hold the probe slot forever: Quickshell's
+  // Process has no kill, so onExited never fires, every later probe queues
+  // behind it, and the panel sits on "Checking…" for good. The known way in
+  // is a keyring with no default collection or a locked one: the CLI waits
+  // on an unlock prompt that nobody sees when the widget spawned it (#52).
+  //
+  // Thirty seconds, not a couple, because `countries list` can be fetching
+  // Proton's 24MB server list, and cutting that short costs more than a
+  // slow answer. -k 5 follows up with SIGKILL if the CLI ignores SIGTERM.
+  // Connect and disconnect are left alone: they legitimately take a minute.
+  readonly property int probeTimeoutSec: 30
+  function probeCommand(args) {
+    return ["timeout", "-k", "5", String(probeTimeoutSec), "protonvpn"].concat(args)
+  }
+  // 124 is `timeout` giving up after SIGTERM, 137 after the SIGKILL.
+  function probeStalled(exitCode) { return exitCode === 124 || exitCode === 137 }
+
+  // Consecutive `protonvpn info` failures. One is a blip and is retried in
+  // 5 s, as before. Three in a row means the CLI can't answer at all, so the
+  // panel stops saying "Checking…", offers sign-in with the reason next to
+  // it, and slows the retry to a minute rather than spawning a CLI (and a
+  // new keyring client) every few seconds forever.
+  property int _accountFailures: 0
+  readonly property int accountGiveUpAfter: 3
   // Which config key is mid-change, "" when nothing is, and the value it's
   // heading for. A click costs two CLI runs, `config set` then the `config
   // list` re-read that confirms it, about 1.4s of CLI startup between them,
@@ -258,7 +294,6 @@ Item {
     return configPendingValue === "off" ? "Turning off…" : "Turning on…"
   }
 
-  readonly property int refreshIntervalSec: intSetting("refreshIntervalSec", 30, 5, 3600)
   readonly property int watchIntervalSec: intSetting("watchIntervalSec", 4, 2, 60)
   readonly property bool notificationsOn: String(setting("notifications", "on")) !== "off"
 
@@ -335,7 +370,7 @@ Item {
     if (!installed) return
     if (cliBusy) { _wantStatus = true; return }
     _probeRunning = true
-    statusProcess.command = ["protonvpn", "status"]
+    statusProcess.command = probeCommand(["status"])
     statusProcess.running = true
   }
 
@@ -343,7 +378,7 @@ Item {
     if (!installed) return
     if (cliBusy) { _wantAccount = true; return }
     _probeRunning = true
-    accountProcess.command = ["protonvpn", "info"]
+    accountProcess.command = probeCommand(["info"])
     accountProcess.running = true
   }
 
@@ -352,7 +387,7 @@ Item {
     if (countriesLoaded && force !== true) return
     if (cliBusy) { _wantCountries = true; return }
     _probeRunning = true
-    countriesProcess.command = ["protonvpn", "countries", "list"]
+    countriesProcess.command = probeCommand(["countries", "list"])
     countriesProcess.running = true
   }
 
@@ -361,7 +396,7 @@ Item {
     if (!installed || !signedIn) { configPending = ""; configPendingValue = ""; return }
     if (cliBusy) { _wantConfig = true; return }
     _probeRunning = true
-    configProcess.command = ["protonvpn", "config", "list"]
+    configProcess.command = probeCommand(["config", "list"])
     configProcess.running = true
   }
 
@@ -387,7 +422,9 @@ Item {
     configPending = key
     configPendingValue = value
     lastError = ""
-    setConfigProcess.command = ["protonvpn", "config", "set", key, value]
+    // Timed like a probe: a hung `config set` would hold configPending, and
+    // with it every switch on the Protection tab, forever.
+    setConfigProcess.command = probeCommand(["config", "set", key, value])
     setConfigProcess.running = true
   }
 
@@ -609,7 +646,7 @@ Item {
     _ksCycle = true
     _ksValue = value
     // Back to where we are now, rather than to whatever Fastest picks later.
-    _ksReturn = (recents.length > 0 && Array.isArray(recents[0].args)) ? recents[0] : null
+    _ksReturn = (!freePlan && recents.length > 0 && Array.isArray(recents[0].args)) ? recents[0] : null
     // The row says "Turning off…" from the first click to the last step, the
     // same words the one-call path uses. From the outside this is one change
     // that takes longer, not three things happening to you.
@@ -1134,7 +1171,7 @@ Item {
     if (connected || linkActive || busy) return
     if (_autoNextMs > 0 && Date.now() < _autoNextMs) return
     var t = recents.length > 0 && Array.isArray(recents[0].args) ? recents[0] : null
-    if (t && !_autoPinFailed) connectTo(t.args, "Reconnecting to " + t.title + "…", t, true)
+    if (t && !_autoPinFailed && !freePlan) connectTo(t.args, "Reconnecting to " + t.title + "…", t, true)
     else connectTo([], "Reconnecting to fastest…", null, true)
   }
 
@@ -1263,15 +1300,23 @@ Item {
 
   Timer {
     id: statusTimer
-    // Cheap enough to keep current while the panel is open; throttled back to
-    // the configured interval once it closes.
-    interval: (root.panelOpen ? 5 : root.refreshIntervalSec) * 1000
+    // Only while the panel is open, because everything `protonvpn status`
+    // feeds (the location, the detail rows, "Connecting…") is only shown
+    // there. The bar icon runs on nmcli, and a tunnel that comes or goes
+    // behind our back gets one refresh from the link watcher.
+    //
+    // Every run is a fresh Python process that opens a new Secret Service
+    // connection, because the CLI probes the keyring on every start. A poll
+    // with the panel closed showed nothing and fed gnome-keyring thousands
+    // of short-lived clients a day, enough to trip a race that aborts the
+    // daemon (#63).
+    interval: 5000
     repeat: true
     // Not while a connect or disconnect is running: `protonvpn connect`
     // blocks for 30-60s, and a 5s poll across that is where most of the
     // concurrent CLI processes used to come from. delayedRefresh pulls fresh
     // state 1.2s after the action finishes, so nothing is lost by waiting.
-    running: root.installed && root.signedIn && !root.busy
+    running: root.panelOpen && root.installed && root.signedIn && !root.busy
     onTriggered: root.refreshStatus()
   }
 
@@ -1406,6 +1451,12 @@ Item {
       // this guard that lands as "You're no longer protected" in the middle
       // of a connect the person just asked for.
       if (was && !link.active) {
+        // nmcli just watched the tunnel go. The status run below normally
+        // agrees a second later, but with no background poll to catch a
+        // failed one, a stale "connected" from the last run would keep the
+        // bar claiming Protected over no tunnel. The link is the fresher
+        // fact, and the next good status run corrects this either way.
+        root.statusConnected = false
         if (!root._expectDown && !actionProcess.running && !connectProcess.running)
           root.notify("VPN Disconnected \udb83\udfc6", "You're no longer protected.", "critical")
         root._expectDown = false
@@ -1417,7 +1468,9 @@ Item {
       if (was !== link.active) root.refreshStatus()
       // A tunnel we didn't think we were signed in for means the account
       // state is wrong, not the link. Re-probe rather than trusting it.
-      if (link.active && !root.signedIn) root.refreshAccount()
+      // Not while a retry is already scheduled, or a CLI that can't answer
+      // gets spawned on every 4 s poll on top of the retry's own schedule.
+      if (link.active && !root.signedIn && !accountRetry.running) root.refreshAccount()
     }
   }
 
@@ -1440,7 +1493,9 @@ Item {
       root._probeRunning = false
       Qt.callLater(root.drainProbes)
       var out = String(statusStdout.text || "")
-      var crashed = exitStatus !== 0
+      // A stall after the whole answer was printed is the same exit-path
+      // failure as the crash, just slower, and `timeout` ended it for us.
+      var crashed = exitStatus !== 0 || root.probeStalled(exitCode)
       if (exitCode === 0 || (crashed && Model.statusComplete(out))) {
         root.applyStatus(out)
         root.lastError = ""
@@ -1455,12 +1510,28 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: accountStdout; waitForEnd: true }
+    stderr: StdioCollector { id: accountStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root._probeRunning = false
       Qt.callLater(root.drainProbes)
       // A one-off failure must not latch "signed out" forever, retry instead
-      // of leaving a signed-in user staring at a sign-in prompt.
-      if (exitCode !== 0) { accountRetry.restart(); return }
+      // of leaving a signed-in user staring at a sign-in prompt. Only after
+      // several in a row does the panel give up waiting, see accountGiveUpAfter.
+      if (exitCode !== 0) {
+        root._accountFailures += 1
+        if (root._accountFailures >= root.accountGiveUpAfter) {
+          root.accountProbed = true
+          root.signedIn = false
+          root.lastError = root.probeStalled(exitCode)
+            ? "Proton VPN isn't answering. Is your keyring unlocked?"
+            : Model.elide(String(accountStderr.text || "") || "protonvpn info failed")
+        }
+        accountRetry.interval = root._accountFailures >= root.accountGiveUpAfter ? 60000 : 5000
+        accountRetry.restart()
+        return
+      }
+      if (root._accountFailures >= root.accountGiveUpAfter) root.lastError = ""
+      root._accountFailures = 0
       var info = Model.parseAccount(String(accountStdout.text || ""))
       var was = root.signedIn
       root.accountProbed = true
@@ -1470,8 +1541,11 @@ Item {
       if (info.signedIn && !was) {
         root.loadCountries(true)
         root.loadConfig()
+        // Signing in fetches the account's tier into the cache.
+        root.loadCities(true)
       }
       if (!info.signedIn) {
+        root.maxTier = -1
         root.countries = []
         root.countriesLoaded = false
         root.config = {}
@@ -1547,8 +1621,12 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) return
       try {
-        var list = JSON.parse(String(citiesStdout.text || "[]"))
+        var out = JSON.parse(String(citiesStdout.text || "{}"))
+        var list = out ? out.cities : null
         root.cities = Array.isArray(list) ? list : []
+        // Only a real tier moves this: a missing cache says nothing about
+        // the account, and must not flip the panel between plans.
+        if (out && typeof out.maxTier === "number" && out.maxTier >= 0) root.maxTier = out.maxTier
         root.citiesLoaded = root.cities.length > 0
       } catch (e) {
         root.cities = []
@@ -1613,7 +1691,9 @@ Item {
         root._desired = -1
         root.activeProfile = ""
         var text = err || out || "Connect failed"
-        root.lastError = Model.isPlanError(text) ? "Requires a Proton VPN Plus plan" : Model.elide(text)
+        if (!Model.isPlanError(text)) root.lastError = Model.elide(text)
+        else if (root.freePlan) root.lastError = "Needs Proton VPN Plus. Fastest picks a Free server for you."
+        else root.lastError = "Requires a Proton VPN Plus plan"
         root.actionStatus = root.lastError
         actionStatusTimer.restart()
       } else {
@@ -1628,7 +1708,9 @@ Item {
         // because you didn't name a destination, but you still ended up
         // somewhere. Recover it from the CLI's own confirmation line so Recent
         // is a record of where you've been, not only of what you clicked.
-        if (!target) {
+        // Not on Free: the CLI won't connect to a server by name there, so a
+        // Recent row for it would be a button that can only fail.
+        if (!target && !root.freePlan) {
           var landed = Model.parseConnected(out)
           if (landed) target = {
             key: "server:" + landed.name,

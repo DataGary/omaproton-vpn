@@ -63,9 +63,10 @@ into the CLI's own prompt, and Proton's client owns the session from there.
 
 You don't need to be a Proton customer to use this. Proton VPN has a **free
 plan**: no data cap, no logs, no ads, run by Proton in Switzerland under Swiss
-privacy law. It gets you a handful of countries and standard speeds, which is
-plenty to be private on café Wi-Fi. Plus adds every country and city on the
-map, faster servers, and the P2P, Secure Core and Tor rows.
+privacy law. Proton picks a free server for you from a handful of countries,
+at standard speeds, which is plenty to be private on café Wi-Fi. Plus lets you
+choose any country and city on the map, and adds faster servers, Random, and
+the P2P, Secure Core and Tor rows.
 
 Make a free account at [proton.me/vpn](https://proton.me/vpn), then come back
 and click the Proton mark. Sign-in happens in the panel.
@@ -198,7 +199,10 @@ fills when the tunnel is up.
 | **Tor** | The fastest Tor-over-VPN server. Your traffic goes VPN first, then into the Tor network, so you can reach `.onion` sites from a normal browser. Noticeably slower. |
 
 Rows marked **PLUS** need a paid plan. On a free plan they fail with a clear
-"Requires a Proton VPN Plus plan", nothing breaks.
+message, nothing breaks. The Countries section wears the tag too: Proton's CLI
+doesn't let a free plan choose its location, so on a free account **Fastest**
+(or the power switch) is the way to connect, and Proton picks a free server for
+you. On a free account Random is tagged as well, since the CLI refuses it there.
 
 After a **P2P** connect the header reads "󰒗 P2P · US-TX#40" and the Server
 row "US-TX#40 · P2P", so you can see the click landed. Most Proton servers permit P2P, so the panel only makes a
@@ -298,7 +302,8 @@ Inside a country:
   any server in that country, which is the same as `protonvpn connect --country`.
 - **Every row below is one city**, showing the best server there right now with
   its current load and any tags: **Free** for free-plan servers, plus P2P, Tor,
-  or Streaming. Cities are ordered by Proton's own speed score, best first.
+  or Streaming. (A free account doesn't see the **Free** tag, since only Plus
+  can pick a location.) Cities are ordered by Proton's own speed score, best first.
 
 The widget shows one row per city rather than one per server on purpose. Large
 countries have thousands of servers and the nearest city would monopolise the
@@ -639,7 +644,6 @@ Configurable from Omarchy's widget settings:
 | Setting | Default | What it controls |
 | --- | --- | --- |
 | Desktop notifications | On | "VPN Connected" with the server and protocol on connect; "VPN Disconnected" if the tunnel drops unexpectedly. Not shown while the panel is open, since the panel already says so. |
-| Status refresh interval | 30 s | How often `protonvpn status` runs for the detail rows while the panel is closed. Open panel: every 5 s. |
 | Link watch interval | 4 s | How often `nmcli` is polled for the bar icon. |
 
 **Protocol.** The one Proton setting the CLI doesn't expose. It lives in
@@ -724,7 +728,9 @@ server name; `debug` deliberately omits your account email. The email is shown
 only inside the panel.
 
 **Network activity.** The widget polls `nmcli` (local, no network) for the bar
-icon, and `protonvpn status` for the detail rows. `status` asks the Proton
+icon, and runs `protonvpn status` for the detail rows only while the panel is
+open, once after each connect or disconnect, and once when the tunnel comes up
+or goes down on its own. With the panel closed nothing polls it. `status` asks the Proton
 client for its server list, which the client refreshes from Proton's API only
 when its own cache has expired, server loads every ~15 minutes, the full list
 every ~3 hours, and only while connected. The widget's polling doesn't add API
@@ -744,7 +750,9 @@ screen-share that tab, it's visible.
 start-up, which is far too slow to poll for a bar icon. The tunnel also appears
 as an active NetworkManager connection named `ProtonVPN <server>` on device
 `proton0`, which `nmcli` reports in around ten milliseconds. The widget polls
-`nmcli` for the icon and only shells out to the CLI for the detail rows. Proton's
+`nmcli` for the icon and only shells out to the CLI for the detail rows. Every
+CLI run is a fresh Python process that opens a new connection to your keyring,
+so the widget keeps them rare: none on a timer while the panel is closed. Proton's
 IPv6 leak guard (`pvpn-killswitch-ipv6`, on a dummy device) stays active
 independently and is deliberately not counted as a live tunnel.
 

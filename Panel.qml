@@ -1445,9 +1445,10 @@ Panel {
                   subtitle: modelData.hint
                   // Secure Core gets an ACTIVE tag; P2P doesn't, since most
                   // servers permit it and the header already says when you
-                  // asked for it.
+                  // asked for it. Random is free for Plus and refused on
+                  // Free, so it only wears the tag for a Free account.
                   trailing: modelData.key === "securecore" && vpn.connected && Model.isSecureCore(vpn.displayServer)
-                            ? "ACTIVE" : (modelData.plus ? "PLUS" : "")
+                            ? "ACTIVE" : (modelData.plus || (vpn.freePlan && modelData.key === "random") ? "PLUS" : "")
                   enabled: !vpn.busy
                   onEntered: root.setCursorFromHover("quick", index)
                   onClicked: root.runQuick(modelData.key)
@@ -1916,10 +1917,16 @@ Panel {
 
             // Inside a drill the header is only the country's name, with
             // nothing to click.
+            //
+            // Choosing a location is a Plus feature: on Free the CLI refuses
+            // every connect that names a country, city or server. So the
+            // section wears PLUS for everyone, the same as P2P or NetShield,
+            // drilled in or not.
             FoldHeader {
               section: "countriesHeader"
               title: root.drilled ? String(vpn.serversCountryName).toUpperCase() : "COUNTRIES"
               count: vpn.countriesLoaded ? vpn.countries.length : -1
+              tag: "PLUS"
               expanded: vpn.countriesExpanded
               active: !root.drilled
               onToggled: { root.clearHighlight(); root.setCountriesExpanded(!vpn.countriesExpanded) }
@@ -2036,6 +2043,9 @@ Panel {
     property string title: ""
     // Below zero hides the count, for a list that has not loaded yet.
     property int count: -1
+    // A tag after the title and count, the way NetShield wears PLUS after
+    // its label. "" for none.
+    property string tag: ""
     property bool expanded: true
     property bool active: true
     signal toggled()
@@ -2067,11 +2077,24 @@ Panel {
     }
 
     Text {
+      id: foldCount
       anchors.left: foldLabel.right
       anchors.leftMargin: Style.space(8)
       anchors.verticalCenter: foldLabel.verticalCenter
       visible: foldHeader.active && foldHeader.count >= 0
       text: String(foldHeader.count)
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Text {
+      anchors.left: foldCount.visible ? foldCount.right : foldLabel.right
+      anchors.leftMargin: Style.space(8)
+      anchors.verticalCenter: foldLabel.verticalCenter
+      visible: foldHeader.tag !== ""
+      text: foldHeader.tag
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -2493,9 +2516,10 @@ Panel {
           text: {
             if (!serverRow.server) return ""
             var bits = [serverRow.server.name]
-            // Tier 0 is Proton's free tier, the one thing a free user needs
-            // to know before clicking.
-            if (serverRow.server.tier === 0) bits.push("Free")
+            // Tier 0 is Proton's free tier. Not said on a Free account: the
+            // CLI won't let Free pick a server by name, so "Free" there would
+            // read as an invitation the click can't keep.
+            if (serverRow.server.tier === 0 && !vpn.freePlan) bits.push("Free")
             var tags = serverRow.server.tags || []
             if (tags.length > 0) bits.push(tags.join(", "))
             return bits.join(" · ")

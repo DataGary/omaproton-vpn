@@ -15,7 +15,8 @@ seeing a second city. One row per city is the choice a person actually wants
 to make.
 
 Usage: servers.py <COUNTRY_CODE> [limit]   one country's cities, best-first
-       servers.py --cities                  every city worldwide, with lat/long
+       servers.py --cities                  every city worldwide, with lat/long,
+                                            and the account's tier
        servers.py --locate <SERVER_NAME>    one server's city and coordinates
 Prints compact JSON, or [] / {} when the cache is missing.
 """
@@ -170,7 +171,17 @@ def main():
         return
     data = read_cache()
     if sys.argv[1] == "--cities":
-        print(json.dumps(all_cities(data) if data else [], separators=(",", ":")))
+        # MaxTier is the signed-in account's tier as of the client's last
+        # fetch (0 is Free). `protonvpn info` doesn't print the plan, and this
+        # file is already being read, so it rides along with the cities.
+        tier = data.get("MaxTier") if data else None
+        out = {
+            # `type is int`, not isinstance: a bool is an int in Python and
+            # must not pass as a tier.
+            "maxTier": tier if type(tier) is int else None,
+            "cities": all_cities(data) if data else [],
+        }
+        print(json.dumps(out, separators=(",", ":")))
         return
     if sys.argv[1] == "--locate":
         name = sys.argv[2] if len(sys.argv) > 2 else ""
