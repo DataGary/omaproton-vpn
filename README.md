@@ -199,10 +199,10 @@ fills when the tunnel is up.
 | **Tor** | The fastest Tor-over-VPN server. Your traffic goes VPN first, then into the Tor network, so you can reach `.onion` sites from a normal browser. Noticeably slower. |
 
 Rows marked **PLUS** need a paid plan. On a free plan they fail with a clear
-message, nothing breaks. On a free account Random wears the tag too, and so
-does every country and city row: Proton's CLI doesn't let a free plan choose
-its location, so **Fastest** (or the power switch) is the way to connect, and
-Proton picks a free server for you.
+message, nothing breaks. The Countries section wears the tag too: Proton's CLI
+doesn't let a free plan choose its location, so on a free account **Fastest**
+(or the power switch) is the way to connect, and Proton picks a free server for
+you. On a free account Random is tagged as well, since the CLI refuses it there.
 
 After a **P2P** connect the header reads "󰒗 P2P · US-TX#40" and the Server
 row "US-TX#40 · P2P", so you can see the click landed. Most Proton servers permit P2P, so the panel only makes a
@@ -302,8 +302,8 @@ Inside a country:
   any server in that country, which is the same as `protonvpn connect --country`.
 - **Every row below is one city**, showing the best server there right now with
   its current load and any tags: **Free** for free-plan servers, plus P2P, Tor,
-  or Streaming. (On a free account these rows show **PLUS** instead, since
-  only Plus can pick a location.) Cities are ordered by Proton's own speed score, best first.
+  or Streaming. (A free account doesn't see the **Free** tag, since only Plus
+  can pick a location.) Cities are ordered by Proton's own speed score, best first.
 
 The widget shows one row per city rather than one per server on purpose. Large
 countries have thousands of servers and the nearest city would monopolise the

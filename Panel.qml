@@ -1917,10 +1917,16 @@ Panel {
 
             // Inside a drill the header is only the country's name, with
             // nothing to click.
+            //
+            // Choosing a location is a Plus feature: on Free the CLI refuses
+            // every connect that names a country, city or server. So the
+            // section wears PLUS for everyone, the same as P2P or NetShield,
+            // drilled in or not.
             FoldHeader {
               section: "countriesHeader"
               title: root.drilled ? String(vpn.serversCountryName).toUpperCase() : "COUNTRIES"
               count: vpn.countriesLoaded ? vpn.countries.length : -1
+              tag: "PLUS"
               expanded: vpn.countriesExpanded
               active: !root.drilled
               onToggled: { root.clearHighlight(); root.setCountriesExpanded(!vpn.countriesExpanded) }
@@ -2037,6 +2043,9 @@ Panel {
     property string title: ""
     // Below zero hides the count, for a list that has not loaded yet.
     property int count: -1
+    // A tag after the title and count, the way NetShield wears PLUS after
+    // its label. "" for none.
+    property string tag: ""
     property bool expanded: true
     property bool active: true
     signal toggled()
@@ -2068,11 +2077,24 @@ Panel {
     }
 
     Text {
+      id: foldCount
       anchors.left: foldLabel.right
       anchors.leftMargin: Style.space(8)
       anchors.verticalCenter: foldLabel.verticalCenter
       visible: foldHeader.active && foldHeader.count >= 0
       text: String(foldHeader.count)
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    Text {
+      anchors.left: foldCount.visible ? foldCount.right : foldLabel.right
+      anchors.leftMargin: Style.space(8)
+      anchors.verticalCenter: foldLabel.verticalCenter
+      visible: foldHeader.tag !== ""
+      text: foldHeader.tag
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -2281,19 +2303,6 @@ Panel {
     onClicked: root.setTab(tabKey)   // setTab clears the highlight
   }
 
-  // The Quick Connect rows' PLUS tag, for a place a Free account can't pick:
-  // on Free the CLI refuses every connect that names a country, city or
-  // server. Invisible on any other plan, and while the plan isn't known.
-  component PlusTag: Text {
-    visible: vpn.freePlan
-    text: "PLUS"
-    textFormat: Text.PlainText
-    color: root.dim
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.caption
-    Layout.alignment: Qt.AlignVCenter
-  }
-
   component CountryRow: CursorSurface {
     id: countryRow
     property var country: null
@@ -2339,8 +2348,6 @@ Panel {
           elide: Text.ElideRight
         }
       }
-
-      PlusTag {}
 
       Text {
         text: countryRow.isCurrent ? "󰄬" : (countryRow.country ? countryRow.country.code : "")
@@ -2433,10 +2440,7 @@ Panel {
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
-      }
-
-      PlusTag {}
-    }
+      }    }
   }
 
   component ServerRow: CursorSurface {
@@ -2513,7 +2517,7 @@ Panel {
             var bits = [serverRow.server.name]
             // Tier 0 is Proton's free tier. Not said on a Free account: the
             // CLI won't let Free pick a server by name, so "Free" there would
-            // read as an invitation the click can't keep. The PLUS tag says it.
+            // read as an invitation the click can't keep.
             if (serverRow.server.tier === 0 && !vpn.freePlan) bits.push("Free")
             var tags = serverRow.server.tags || []
             if (tags.length > 0) bits.push(tags.join(", "))
@@ -2525,8 +2529,6 @@ Panel {
           elide: Text.ElideRight
         }
       }
-
-      PlusTag {}
 
       Text {
         text: serverRow.isCurrent ? "󰄬" : (serverRow.server && serverRow.server.load !== undefined && serverRow.server.load !== null ? serverRow.server.load + "%" : "")
