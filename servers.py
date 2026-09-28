@@ -176,7 +176,9 @@ def main():
         # file is already being read, so it rides along with the cities.
         tier = data.get("MaxTier") if data else None
         out = {
-            "maxTier": tier if isinstance(tier, int) else None,
+            # `type is int`, not isinstance: a bool is an int in Python and
+            # must not pass as a tier.
+            "maxTier": tier if type(tier) is int else None,
             "cities": all_cities(data) if data else [],
         }
         print(json.dumps(out, separators=(",", ":")))

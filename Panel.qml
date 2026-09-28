@@ -2440,7 +2440,8 @@ Panel {
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
         }
-      }    }
+      }
+    }
   }
 
   component ServerRow: CursorSurface {

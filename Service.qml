@@ -1493,7 +1493,9 @@ Item {
       root._probeRunning = false
       Qt.callLater(root.drainProbes)
       var out = String(statusStdout.text || "")
-      var crashed = exitStatus !== 0
+      // A stall after the whole answer was printed is the same exit-path
+      // failure as the crash, just slower, and `timeout` ended it for us.
+      var crashed = exitStatus !== 0 || root.probeStalled(exitCode)
       if (exitCode === 0 || (crashed && Model.statusComplete(out))) {
         root.applyStatus(out)
         root.lastError = ""
