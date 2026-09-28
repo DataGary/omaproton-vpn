@@ -41,6 +41,14 @@ Item {
   property bool accountProbed: false
   property string account: ""
   property string plan: ""
+  // The account's Proton tier from the client's server cache, -1 until read.
+  // On Free (0) the CLI refuses every connect that names a place or asks for
+  // Random: "Location selection is not available on the free plan". That is
+  // Proton's rule, not a check we can or should route around, so the panel
+  // says so up front with the same PLUS tag the paid features wear, and the
+  // automatic reconnects ask for Fastest, which is the one connect Free has.
+  property int maxTier: -1
+  readonly property bool freePlan: maxTier === 0
 
   // nmcli-derived, fast
   property bool linkActive: false
@@ -638,7 +646,7 @@ Item {
     _ksCycle = true
     _ksValue = value
     // Back to where we are now, rather than to whatever Fastest picks later.
-    _ksReturn = (recents.length > 0 && Array.isArray(recents[0].args)) ? recents[0] : null
+    _ksReturn = (!freePlan && recents.length > 0 && Array.isArray(recents[0].args)) ? recents[0] : null
     // The row says "Turning off…" from the first click to the last step, the
     // same words the one-call path uses. From the outside this is one change
     // that takes longer, not three things happening to you.
@@ -1163,7 +1171,7 @@ Item {
     if (connected || linkActive || busy) return
     if (_autoNextMs > 0 && Date.now() < _autoNextMs) return
     var t = recents.length > 0 && Array.isArray(recents[0].args) ? recents[0] : null
-    if (t && !_autoPinFailed) connectTo(t.args, "Reconnecting to " + t.title + "…", t, true)
+    if (t && !_autoPinFailed && !freePlan) connectTo(t.args, "Reconnecting to " + t.title + "…", t, true)
     else connectTo([], "Reconnecting to fastest…", null, true)
   }
 
@@ -1531,8 +1539,11 @@ Item {
       if (info.signedIn && !was) {
         root.loadCountries(true)
         root.loadConfig()
+        // Signing in fetches the account's tier into the cache.
+        root.loadCities(true)
       }
       if (!info.signedIn) {
+        root.maxTier = -1
         root.countries = []
         root.countriesLoaded = false
         root.config = {}
@@ -1608,8 +1619,12 @@ Item {
     onExited: function(exitCode) {
       if (exitCode !== 0) return
       try {
-        var list = JSON.parse(String(citiesStdout.text || "[]"))
+        var out = JSON.parse(String(citiesStdout.text || "{}"))
+        var list = out ? out.cities : null
         root.cities = Array.isArray(list) ? list : []
+        // Only a real tier moves this: a missing cache says nothing about
+        // the account, and must not flip the panel between plans.
+        if (out && typeof out.maxTier === "number" && out.maxTier >= 0) root.maxTier = out.maxTier
         root.citiesLoaded = root.cities.length > 0
       } catch (e) {
         root.cities = []
@@ -1674,7 +1689,9 @@ Item {
         root._desired = -1
         root.activeProfile = ""
         var text = err || out || "Connect failed"
-        root.lastError = Model.isPlanError(text) ? "Requires a Proton VPN Plus plan" : Model.elide(text)
+        if (!Model.isPlanError(text)) root.lastError = Model.elide(text)
+        else if (root.freePlan) root.lastError = "Needs Proton VPN Plus. Fastest picks a Free server for you."
+        else root.lastError = "Requires a Proton VPN Plus plan"
         root.actionStatus = root.lastError
         actionStatusTimer.restart()
       } else {
@@ -1689,7 +1706,9 @@ Item {
         // because you didn't name a destination, but you still ended up
         // somewhere. Recover it from the CLI's own confirmation line so Recent
         // is a record of where you've been, not only of what you clicked.
-        if (!target) {
+        // Not on Free: the CLI won't connect to a server by name there, so a
+        // Recent row for it would be a button that can only fail.
+        if (!target && !root.freePlan) {
           var landed = Model.parseConnected(out)
           if (landed) target = {
             key: "server:" + landed.name,

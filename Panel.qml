@@ -1445,9 +1445,10 @@ Panel {
                   subtitle: modelData.hint
                   // Secure Core gets an ACTIVE tag; P2P doesn't, since most
                   // servers permit it and the header already says when you
-                  // asked for it.
+                  // asked for it. Random is free for Plus and refused on
+                  // Free, so it only wears the tag for a Free account.
                   trailing: modelData.key === "securecore" && vpn.connected && Model.isSecureCore(vpn.displayServer)
-                            ? "ACTIVE" : (modelData.plus ? "PLUS" : "")
+                            ? "ACTIVE" : (modelData.plus || (vpn.freePlan && modelData.key === "random") ? "PLUS" : "")
                   enabled: !vpn.busy
                   onEntered: root.setCursorFromHover("quick", index)
                   onClicked: root.runQuick(modelData.key)
@@ -2280,6 +2281,19 @@ Panel {
     onClicked: root.setTab(tabKey)   // setTab clears the highlight
   }
 
+  // The Quick Connect rows' PLUS tag, for a place a Free account can't pick:
+  // on Free the CLI refuses every connect that names a country, city or
+  // server. Invisible on any other plan, and while the plan isn't known.
+  component PlusTag: Text {
+    visible: vpn.freePlan
+    text: "PLUS"
+    textFormat: Text.PlainText
+    color: root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    Layout.alignment: Qt.AlignVCenter
+  }
+
   component CountryRow: CursorSurface {
     id: countryRow
     property var country: null
@@ -2325,6 +2339,8 @@ Panel {
           elide: Text.ElideRight
         }
       }
+
+      PlusTag {}
 
       Text {
         text: countryRow.isCurrent ? "󰄬" : (countryRow.country ? countryRow.country.code : "")
@@ -2418,6 +2434,8 @@ Panel {
           elide: Text.ElideRight
         }
       }
+
+      PlusTag {}
     }
   }
 
@@ -2493,9 +2511,10 @@ Panel {
           text: {
             if (!serverRow.server) return ""
             var bits = [serverRow.server.name]
-            // Tier 0 is Proton's free tier, the one thing a free user needs
-            // to know before clicking.
-            if (serverRow.server.tier === 0) bits.push("Free")
+            // Tier 0 is Proton's free tier. Not said on a Free account: the
+            // CLI won't let Free pick a server by name, so "Free" there would
+            // read as an invitation the click can't keep. The PLUS tag says it.
+            if (serverRow.server.tier === 0 && !vpn.freePlan) bits.push("Free")
             var tags = serverRow.server.tags || []
             if (tags.length > 0) bits.push(tags.join(", "))
             return bits.join(" · ")
@@ -2506,6 +2525,8 @@ Panel {
           elide: Text.ElideRight
         }
       }
+
+      PlusTag {}
 
       Text {
         text: serverRow.isCurrent ? "󰄬" : (serverRow.server && serverRow.server.load !== undefined && serverRow.server.load !== null ? serverRow.server.load + "%" : "")
