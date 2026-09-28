@@ -244,6 +244,32 @@ Item {
   property bool _wantConfig: false
   readonly property bool _probesPending: _wantStatus || _wantAccount || _wantCountries || _wantConfig
   readonly property bool refreshing: statusProcess.running
+
+  // Every read-only probe runs under coreutils `timeout`, because a CLI that
+  // never returns would otherwise hold the probe slot forever: Quickshell's
+  // Process has no kill, so onExited never fires, every later probe queues
+  // behind it, and the panel sits on "Checking…" for good. The known way in
+  // is a keyring with no default collection or a locked one: the CLI waits
+  // on an unlock prompt that nobody sees when the widget spawned it (#52).
+  //
+  // Thirty seconds, not a couple, because `countries list` can be fetching
+  // Proton's 24MB server list, and cutting that short costs more than a
+  // slow answer. -k 5 follows up with SIGKILL if the CLI ignores SIGTERM.
+  // Connect and disconnect are left alone: they legitimately take a minute.
+  readonly property int probeTimeoutSec: 30
+  function probeCommand(args) {
+    return ["timeout", "-k", "5", String(probeTimeoutSec), "protonvpn"].concat(args)
+  }
+  // 124 is `timeout` giving up after SIGTERM, 137 after the SIGKILL.
+  function probeStalled(exitCode) { return exitCode === 124 || exitCode === 137 }
+
+  // Consecutive `protonvpn info` failures. One is a blip and is retried in
+  // 5 s, as before. Three in a row means the CLI can't answer at all, so the
+  // panel stops saying "Checking…", offers sign-in with the reason next to
+  // it, and slows the retry to a minute rather than spawning a CLI (and a
+  // new keyring client) every few seconds forever.
+  property int _accountFailures: 0
+  readonly property int accountGiveUpAfter: 3
   // Which config key is mid-change, "" when nothing is, and the value it's
   // heading for. A click costs two CLI runs, `config set` then the `config
   // list` re-read that confirms it, about 1.4s of CLI startup between them,
@@ -336,7 +362,7 @@ Item {
     if (!installed) return
     if (cliBusy) { _wantStatus = true; return }
     _probeRunning = true
-    statusProcess.command = ["protonvpn", "status"]
+    statusProcess.command = probeCommand(["status"])
     statusProcess.running = true
   }
 
@@ -344,7 +370,7 @@ Item {
     if (!installed) return
     if (cliBusy) { _wantAccount = true; return }
     _probeRunning = true
-    accountProcess.command = ["protonvpn", "info"]
+    accountProcess.command = probeCommand(["info"])
     accountProcess.running = true
   }
 
@@ -353,7 +379,7 @@ Item {
     if (countriesLoaded && force !== true) return
     if (cliBusy) { _wantCountries = true; return }
     _probeRunning = true
-    countriesProcess.command = ["protonvpn", "countries", "list"]
+    countriesProcess.command = probeCommand(["countries", "list"])
     countriesProcess.running = true
   }
 
@@ -362,7 +388,7 @@ Item {
     if (!installed || !signedIn) { configPending = ""; configPendingValue = ""; return }
     if (cliBusy) { _wantConfig = true; return }
     _probeRunning = true
-    configProcess.command = ["protonvpn", "config", "list"]
+    configProcess.command = probeCommand(["config", "list"])
     configProcess.running = true
   }
 
@@ -388,7 +414,9 @@ Item {
     configPending = key
     configPendingValue = value
     lastError = ""
-    setConfigProcess.command = ["protonvpn", "config", "set", key, value]
+    // Timed like a probe: a hung `config set` would hold configPending, and
+    // with it every switch on the Protection tab, forever.
+    setConfigProcess.command = probeCommand(["config", "set", key, value])
     setConfigProcess.running = true
   }
 
@@ -1432,7 +1460,9 @@ Item {
       if (was !== link.active) root.refreshStatus()
       // A tunnel we didn't think we were signed in for means the account
       // state is wrong, not the link. Re-probe rather than trusting it.
-      if (link.active && !root.signedIn) root.refreshAccount()
+      // Not while a retry is already scheduled, or a CLI that can't answer
+      // gets spawned on every 4 s poll on top of the retry's own schedule.
+      if (link.active && !root.signedIn && !accountRetry.running) root.refreshAccount()
     }
   }
 
@@ -1470,12 +1500,28 @@ Item {
     running: false
     command: []
     stdout: StdioCollector { id: accountStdout; waitForEnd: true }
+    stderr: StdioCollector { id: accountStderr; waitForEnd: true }
     onExited: function(exitCode) {
       root._probeRunning = false
       Qt.callLater(root.drainProbes)
       // A one-off failure must not latch "signed out" forever, retry instead
-      // of leaving a signed-in user staring at a sign-in prompt.
-      if (exitCode !== 0) { accountRetry.restart(); return }
+      // of leaving a signed-in user staring at a sign-in prompt. Only after
+      // several in a row does the panel give up waiting, see accountGiveUpAfter.
+      if (exitCode !== 0) {
+        root._accountFailures += 1
+        if (root._accountFailures >= root.accountGiveUpAfter) {
+          root.accountProbed = true
+          root.signedIn = false
+          root.lastError = root.probeStalled(exitCode)
+            ? "Proton VPN isn't answering. Is your keyring unlocked?"
+            : Model.elide(String(accountStderr.text || "") || "protonvpn info failed")
+        }
+        accountRetry.interval = root._accountFailures >= root.accountGiveUpAfter ? 60000 : 5000
+        accountRetry.restart()
+        return
+      }
+      if (root._accountFailures >= root.accountGiveUpAfter) root.lastError = ""
+      root._accountFailures = 0
       var info = Model.parseAccount(String(accountStdout.text || ""))
       var was = root.signedIn
       root.accountProbed = true
