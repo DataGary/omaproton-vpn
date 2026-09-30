@@ -452,6 +452,11 @@ Item {
   // The whole parsed file, or null when there isn't a readable one.
   property var protonSettings: null
   property bool splitLoaded: false
+  // The last read found no file. The watch can't recover from that on its
+  // own when Proton's directory didn't exist yet (a fresh install, before the
+  // first sign in): there is nothing to watch, so the file Proton creates
+  // later is never seen. watchTimer retries the read while this is set.
+  property bool protonFileMissing: false
   property string splitError: ""
 
   readonly property bool splitAvailable: splitLoaded && protonSettings !== null
@@ -1280,12 +1285,12 @@ Item {
     printErrors: false
     watchChanges: true
     atomicWrites: true
-    onLoaded: root.readProtonSettings(text())
+    onLoaded: { root.protonFileMissing = false; root.readProtonSettings(text()) }
     onFileChanged: reload()
     // No file yet, or no permission to read it. Either way there is nothing
     // to edit and the panel says so instead of offering a switch that would
     // have to create it.
-    onLoadFailed: { root.protonSettings = null; root.splitLoaded = true }
+    onLoadFailed: { root.protonFileMissing = true; root.protonSettings = null; root.splitLoaded = true }
     onSaveFailed: root.splitError = "Could not save Proton's settings"
   }
 
@@ -1295,7 +1300,10 @@ Item {
     repeat: true
     running: root.installed
     triggeredOnStart: true
-    onTriggered: root.watchLink()
+    onTriggered: {
+      root.watchLink()
+      if (root.protonFileMissing) protonFile.reload()
+    }
   }
 
   Timer {
