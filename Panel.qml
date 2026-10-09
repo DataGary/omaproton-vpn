@@ -87,8 +87,27 @@ Panel {
 
   // Drilled into one country's server list rather than the country list.
   readonly property bool drilled: vpn.serversCountry !== ""
+  // One level further: a city opened into its individual servers.
+  readonly property bool drilledCity: drilled && vpn.serversCity !== ""
+  // Which city row to put the cursor back on when the city closes.
+  property int cityReturnIndex: 0
+  // A big city has hundreds of servers (Frankfurt has over 500), more than
+  // anyone scrolls through or the panel should build rows for. The best
+  // ones by Proton's score are shown, and the filter reaches the rest by
+  // name, which is how someone after one particular server knows it.
+  property string serverFilter: ""
+  readonly property int cityRowLimit: 100
+  readonly property var cityMatches: {
+    if (!drilledCity) return []
+    var q = serverFilter.trim().toUpperCase()
+    if (q === "") return vpn.servers
+    return vpn.servers.filter(function(s) { return String(s.name).toUpperCase().indexOf(q) !== -1 })
+  }
+  // What the rows under "Fastest in …" are: a country's cities, or a city's
+  // servers, capped as above.
+  readonly property var shownServers: drilledCity ? cityMatches.slice(0, cityRowLimit) : vpn.servers
   // Row 0 inside a drill is "Fastest in <country>"; real servers follow it.
-  readonly property int serverRowCount: drilled ? vpn.servers.length + 1 : 0
+  readonly property int serverRowCount: drilled ? shownServers.length + 1 : 0
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
@@ -437,7 +456,7 @@ Panel {
   }
 
   function highlightRow() {
-    if (!highlight || !drilled || vpn.serversCountry !== highlight.code || !serverColumn) return null
+    if (!highlight || !drilled || drilledCity || vpn.serversCountry !== highlight.code || !serverColumn) return null
     for (var i = 0; i < vpn.servers.length; i++) {
       if (vpn.servers[i].city === highlight.city) return serverColumn.children[i + 1] || null
     }
@@ -463,6 +482,8 @@ Panel {
     if (tab !== "connections") setTab("connections")
     cursorActive = true
     vpn.loadServers(country.code, country.name)
+    cityReturnIndex = 0
+    serverFilter = ""
     focusSection = "servers"
     serverIndex = 0
     anchorCountrySection()
@@ -471,9 +492,40 @@ Panel {
   function drillOut() {
     clearHighlight()
     vpn.clearServers()
+    serverFilter = ""
+    cityReturnIndex = 0
     focusSection = "countries"
     serverIndex = 0
     anchorCountrySection()
+  }
+
+  // A city row connects to that city's best server in one click, as before.
+  // Opening it instead lists every server there, for picking one by name.
+  function openCity(index) {
+    var s = shownServers[index - 1]
+    if (!s || drilledCity || vpn.serversLoading) return
+    clearHighlight()
+    cityReturnIndex = index
+    serverFilter = ""
+    vpn.loadServers(vpn.serversCountry, vpn.serversCountryName, s.city)
+    focusSection = "servers"
+    serverIndex = 0
+    anchorCountrySection()
+  }
+
+  function closeCity() {
+    if (!drilledCity || vpn.serversLoading) return
+    serverFilter = ""
+    vpn.loadServers(vpn.serversCountry, vpn.serversCountryName)
+    focusSection = "servers"
+    serverIndex = 0
+    anchorCountrySection()
+  }
+
+  // Back out one level: a city to its country, a country to the list.
+  function backOut() {
+    if (drilledCity) closeCity()
+    else drillOut()
   }
 
   function moveCursor(dx, dy) {
@@ -492,7 +544,8 @@ Panel {
       }
       if (focusSection === "tabs") { stepTab(dx); return }
       if (dx > 0 && focusSection === "countries") drillInto(filteredCountries[countryIndex])
-      else if (dx < 0 && focusSection === "servers") drillOut()
+      else if (dx > 0 && focusSection === "servers") openCity(serverIndex)
+      else if (dx < 0 && focusSection === "servers") backOut()
       // On a header they unfold and fold its list, the way they open and
       // close a country.
       else if (focusSection === "quickHeader") setQuickExpanded(dx > 0)
@@ -612,7 +665,8 @@ Panel {
     }
     if (t === "g" || t === "z") { pendingKey = t; pendingTimer.restart(); return }
     // The filter lives inside the list, so "/" unfolds it first.
-    if (t === "/") { setCountriesExpanded(true); filterField.forceActiveFocus() }
+    if (t === "/" && drilledCity) serverFilterField.forceActiveFocus()
+    else if (t === "/") { setCountriesExpanded(true); filterField.forceActiveFocus() }
     else if (t === "G") jumpBottom()
     else if (t === "{") jumpSection(-1)
     else if (t === "}") jumpSection(1)
@@ -709,10 +763,16 @@ Panel {
   }
 
   function activateServerRow(index) {
-    if (index <= 0) {
+    if (index <= 0 && drilledCity) {
+      // Fastest in a city is its best-scored server, the one its row in the
+      // country list connects to. The full list, not the filtered one.
+      var best = vpn.servers[0]
+      if (!best) return
+      vpn.connectServer(best.name, best.city, vpn.serversCountryName)
+    } else if (index <= 0) {
       vpn.connectCountry(vpn.serversCountry, vpn.serversCountryName)
     } else {
-      var s = vpn.servers[index - 1]
+      var s = shownServers[index - 1]
       if (!s) return
       vpn.connectServer(s.name, s.city, vpn.serversCountryName)
     }
@@ -851,6 +911,7 @@ Panel {
       anchorPending = false
       cursorActive = false
       filterQuery = ""
+      serverFilter = ""
       draft = null
       paletteFile.reload()
       vpn.clearServers()
@@ -872,7 +933,16 @@ Panel {
     function onInstalledChanged() { root.ensureCursor() }
     function onCountriesChanged() { root.ensureCursor() }
     // Servers arrive asynchronously after a drill; re-anchor once they do.
-    function onServersLoadingChanged() { if (!vpn.serversLoading && root.drilled) root.applyAnchor() }
+    function onServersLoadingChanged() {
+      if (vpn.serversLoading || !root.drilled) return
+      // Back from a city: the cursor goes to the city it came from, which
+      // only exists once the country's rows are in again.
+      if (!root.drilledCity && root.cityReturnIndex > 0) {
+        root.serverIndex = Math.min(root.cityReturnIndex, root.serverRowCount - 1)
+        root.cityReturnIndex = 0
+        root.scrollCursorIntoView()
+      } else root.applyAnchor()
+    }
   }
 
   IpcHandler {
@@ -951,6 +1021,7 @@ Panel {
         autoWaitMs: Math.max(0, vpn._autoNextMs - Date.now()),
         pinFailed: vpn._autoPinFailed,
         drilledInto: vpn.serversCountry,
+        drilledCity: vpn.serversCity,
         servers: vpn.servers.length,
         lastError: vpn.lastError
       })
@@ -999,7 +1070,7 @@ Panel {
       // An open Mode or Apps popup owns the keyboard while it is up, or hjkl
       // would drive the cursor on the panel behind it, scrolling a list the
       // person can't see instead of moving inside the one they opened.
-      blocked: filterField.activeFocus || usernameField.activeFocus || nameField.activeFocus
+      blocked: filterField.activeFocus || serverFilterField.activeFocus || usernameField.activeFocus || nameField.activeFocus
                || splitModeRow.popupOpen || splitAppsRow.popupOpen
                || whereRow.popupOpen || featureRow.popupOpen
       onMoveRequested: function(dx, dy) {
@@ -1028,7 +1099,7 @@ Panel {
       onCloseRequested: {
         if (root.openDialog) { root.openDialog.canceled(); return }
         if (root.draft !== null) { root.closeEditor(root.draft.id); return }
-        root.drilled ? root.drillOut() : root.close()
+        root.drilled ? root.backOut() : root.close()
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       // No single-letter actions on the tunnel, on purpose: the panel takes
@@ -1924,7 +1995,8 @@ Panel {
             // drilled in or not.
             FoldHeader {
               section: "countriesHeader"
-              title: root.drilled ? String(vpn.serversCountryName).toUpperCase() : "COUNTRIES"
+              title: !root.drilled ? "COUNTRIES"
+                     : String(root.drilledCity ? vpn.serversCountryName + " · " + vpn.serversCity : vpn.serversCountryName).toUpperCase()
               count: vpn.countriesLoaded ? vpn.countries.length : -1
               tag: "PLUS"
               expanded: vpn.countriesExpanded
@@ -1947,6 +2019,44 @@ Panel {
               horizontalAlignment: Text.AlignHCenter
             }
 
+            TextField {
+              id: serverFilterField
+              visible: root.drilledCity && !vpn.serversLoading
+              width: parent.width
+              foreground: root.foreground
+              placeholderText: "Filter by name, e.g. " + (vpn.servers.length > 0 ? vpn.servers[0].name.replace(/#.*/, "#12") : "#12") + "  (press /)"
+              text: root.serverFilter
+              onTextChanged: {
+                root.serverFilter = text
+                root.serverIndex = 0
+              }
+              Keys.onEscapePressed: function(event) {
+                if (text !== "") text = ""
+                keyCatcher.forceActiveFocus()
+                event.accepted = true
+              }
+              // Enter takes the first match, the way the country filter does.
+              Keys.onReturnPressed: function(event) {
+                var s = root.shownServers[0]
+                if (s) {
+                  vpn.connectServer(s.name, s.city, vpn.serversCountryName)
+                  keyCatcher.forceActiveFocus()
+                  root.showConnection()
+                }
+                event.accepted = true
+              }
+            }
+
+            Text {
+              visible: root.drilledCity && !vpn.serversLoading && root.cityMatches.length === 0 && root.serverFilter.trim() !== ""
+              width: parent.width
+              text: "No servers match."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+            }
+
             Column {
               id: serverColumn
               visible: root.drilled && !vpn.serversLoading
@@ -1956,7 +2066,7 @@ Panel {
               FastestRow { width: serverColumn.width }
 
               Repeater {
-                model: vpn.servers
+                model: root.shownServers
                 ServerRow {
                   required property var modelData
                   required property int index
@@ -2378,7 +2488,7 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onClicked: root.drillOut()
+      onClicked: root.backOut()
     }
 
     Text {
@@ -2386,7 +2496,8 @@ Panel {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: Style.space(10)
-      text: "‹  All countries"
+      text: root.drilledCity ? "‹  All of " + vpn.serversCountryName : "‹  All countries"
+      textFormat: Text.PlainText
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -2424,7 +2535,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: "Fastest in " + vpn.serversCountryName
+          text: "Fastest in " + (root.drilledCity ? vpn.serversCity : vpn.serversCountryName)
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
@@ -2434,7 +2545,17 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: vpn.servers.length > 0 ? vpn.servers.length + (vpn.servers.length === 1 ? " city" : " cities") + " available" : "Let Proton choose"
+          text: {
+            var n = vpn.servers.length
+            if (root.drilledCity) {
+              if (n === 0) return "No servers available"
+              var shown = root.shownServers.length
+              var all = n + (n === 1 ? " server" : " servers")
+              if (root.serverFilter.trim() !== "") return root.cityMatches.length + " of " + all + " match"
+              return shown < n ? all + ", best " + shown + " shown" : all
+            }
+            return n > 0 ? n + (n === 1 ? " city" : " cities") + " available" : "Let Proton choose"
+          }
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -2449,18 +2570,23 @@ Panel {
     property var server: null
     property int rowIndex: 0
 
-    // The row stands for a city, so any server in that city counts as current,
-    // status reports "NL#42 in Amsterdam, Netherlands", so match on location.
+    // In a country the row stands for a city, so any server in that city
+    // counts as current: status reports "NL#42 in Amsterdam, Netherlands", so
+    // match on location. Inside a city each row is one server, so only that
+    // server is.
     readonly property bool isCurrent: vpn.connected && server
                                       && (vpn.displayServer === server.name
-                                          || (server.city !== "" && String(vpn.location).indexOf(server.city) === 0))
+                                          || (!root.drilledCity && server.city !== ""
+                                              && String(vpn.location).indexOf(server.city) === 0))
+    // A city with more than one server opens into them.
+    readonly property bool opens: !root.drilledCity && server && (server.count || 0) > 1
 
     hasCursor: root.cursorActive && root.focusSection === "servers" && root.serverIndex === rowIndex
     foreground: root.foreground
     implicitHeight: serverContent.implicitHeight + Style.spacing.rowPaddingX
 
     // The city that was clicked on the map breathes until the next click.
-    readonly property bool pulsing: root.highlight !== null && server
+    readonly property bool pulsing: root.highlight !== null && server && !root.drilledCity
                                     && root.highlight.code === vpn.serversCountry
                                     && root.highlight.city === server.city
     Rectangle {
@@ -2502,7 +2628,7 @@ Panel {
 
         Text {
           Layout.fillWidth: true
-          text: serverRow.server ? serverRow.server.city : ""
+          text: !serverRow.server ? "" : (root.drilledCity ? serverRow.server.name : serverRow.server.city)
           textFormat: Text.PlainText
           color: root.foreground
           font.family: root.fontFamily
@@ -2515,14 +2641,17 @@ Panel {
           textFormat: Text.PlainText
           text: {
             if (!serverRow.server) return ""
-            var bits = [serverRow.server.name]
+            // Inside a city the name is the title, so the line under it is
+            // only what sets this server apart.
+            var bits = root.drilledCity ? [] : [serverRow.server.name]
             // Tier 0 is Proton's free tier. Not said on a Free account: the
             // CLI won't let Free pick a server by name, so "Free" there would
             // read as an invitation the click can't keep.
             if (serverRow.server.tier === 0 && !vpn.freePlan) bits.push("Free")
             var tags = serverRow.server.tags || []
             if (tags.length > 0) bits.push(tags.join(", "))
-            return bits.join(" · ")
+            if (serverRow.opens) bits.push(serverRow.server.count + " servers")
+            return bits.length > 0 ? bits.join(" · ") : serverRow.server.city
           }
           color: root.dim
           font.family: root.fontFamily
@@ -2542,6 +2671,34 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
         Layout.alignment: Qt.AlignVCenter
+      }
+
+      // Its own click target: the rest of the row still connects in one
+      // click, this opens the city's servers instead. `→` does the same
+      // from the keyboard.
+      Item {
+        visible: serverRow.opens
+        Layout.alignment: Qt.AlignVCenter
+        implicitWidth: chevron.implicitWidth + Style.space(12)
+        implicitHeight: serverContent.implicitHeight
+
+        Text {
+          id: chevron
+          anchors.centerIn: parent
+          text: "›"
+          color: chevronArea.containsMouse ? root.foreground : root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        MouseArea {
+          id: chevronArea
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onEntered: root.setCursorFromHover("servers", serverRow.rowIndex)
+          onClicked: root.openCity(serverRow.rowIndex)
+        }
       }
     }
   }

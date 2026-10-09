@@ -69,6 +69,9 @@ Item {
   property var servers: []
   property string serversCountry: ""
   property string serversCountryName: ""
+  // One level further down: every server in one of that country's cities,
+  // or "" while `servers` holds the country's cities.
+  property string serversCity: ""
   property bool serversLoading: false
 
   // Every Proton city with coordinates, for the mini-map. From the client's
@@ -214,6 +217,18 @@ Item {
   property bool _expectDown: false
   // What the in-flight connect was asked for, recorded to recents on success.
   property var _target: null
+  // The server our own last connect landed on, so the link watcher can tell
+  // a tunnel it brought up from one that came up some other way.
+  property string _ownServer: ""
+  // A tunnel that came up outside the widget (`protonvpn connect` in a
+  // terminal), waiting for its city and country to be known before it is
+  // recorded to Recent. "" when there is none.
+  property string _outsideServer: ""
+  // Whether that tunnel was already up on the first look at the link, after
+  // a login or a shell restart, rather than seen coming up.
+  property bool _outsideAtStartup: false
+  // The link watcher has run once, so `was` in its handler means something.
+  property bool _linkPolled: false
   // When the last action finished, and when the in-flight link poll started.
   // A poll that began before the action ended carries pre-action data, so it
   // must not be used to decide whether the action took effect.
@@ -848,14 +863,21 @@ Item {
     return "p" + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)
   }
 
-  function loadServers(code, name) {
+  // With a city, the rows are that city's servers instead of the country's
+  // cities. The name only ever travels as one argv entry, never through a
+  // shell, and servers.py matches it against the cache, nothing more.
+  function loadServers(code, name, city) {
     var c = String(code || "").trim().toUpperCase()
+    var town = String(city || "").trim()
     if (!installed || !/^[A-Z]{2}$/.test(c) || serversProcess.running) return
     serversCountry = c
     serversCountryName = name || c
+    serversCity = town
     servers = []
     serversLoading = true
-    serversProcess.command = ["python3", scriptPath, c, "80"]
+    serversProcess.command = town !== ""
+      ? ["python3", scriptPath, "--city", c, town]
+      : ["python3", scriptPath, c, "80"]
     serversProcess.running = true
   }
 
@@ -893,6 +915,7 @@ Item {
     servers = []
     serversCountry = ""
     serversCountryName = ""
+    serversCity = ""
     serversLoading = false
   }
 
@@ -1190,6 +1213,73 @@ Item {
     saveState()
   }
 
+  // Recent is a record of where you've been, and `protonvpn connect` in a
+  // terminal takes you somewhere too. The widget never sees that command's
+  // output, but it sees its tunnel: Proton names the NetworkManager profile
+  // "ProtonVPN <server>", so the link watcher already holds the server name.
+  //
+  // Our own connects record themselves when they exit, from the CLI's
+  // confirmation line, so a tunnel that comes up while one is running, or
+  // that is the server one landed on, is left to that path.
+  function noteOutsideConnect(link, was, wasServer) {
+    if (!link.active) {
+      _outsideServer = ""
+      if (!connectProcess.running) _ownServer = ""
+      return
+    }
+    var n = String(link.server || "")
+    // The same tunnel as on the last poll is not news.
+    if (n === "" || (was && n === wasServer)) return
+    if (connectProcess.running || n === _ownServer) return
+    // Same rule as a recent read back from the state file: only a plain
+    // server name may ever become `protonvpn connect` argv.
+    if (!connectArg.test(n) || n.charAt(0) === "-") return
+    _outsideServer = n
+    _outsideAtStartup = !_linkPolled
+    recordOutside()
+  }
+
+  // Records the pending outside tunnel once everything its row needs is in:
+  // the saved Recent list (or this would be overwritten when it loads), the
+  // plan, the city from the map lookup that runs on every server change, and
+  // the country's name for the subtitle. Each of those re-calls this when it
+  // lands, so whichever comes last does the recording.
+  function recordOutside() {
+    var n = _outsideServer
+    if (n === "" || !stateLoaded) return
+    // Not on Free, and not while the plan is unknown: the CLI won't connect
+    // to a server by name on Free, so the row would be a button that fails.
+    if (maxTier < 0) return
+    if (freePlan) { _outsideServer = ""; return }
+    if (!currentPlace || String(currentPlace.name).toUpperCase() !== n.toUpperCase()) return
+    if (!countriesLoaded) { loadCountries(false); return }
+    _outsideServer = ""
+    // A tunnel that was already up when the widget started is most likely
+    // the one the top of Recent asked for before a restart. If that entry
+    // already names this server, or this server's country, leave the order
+    // alone rather than adding a twin of it on every login.
+    if (_outsideAtStartup && recentCovers(recents[0], n, currentPlace.code)) return
+    var country = countryName(currentPlace.code)
+    recordRecent({
+      key: "server:" + n,
+      title: currentPlace.city ? currentPlace.city : n,
+      subtitle: [country, n].filter(function(v) { return v !== "" }).join(" · "),
+      args: [n]
+    })
+  }
+
+  function recentCovers(r, name, code) {
+    if (!r || !Array.isArray(r.args)) return false
+    if (r.args.indexOf(name) !== -1) return true
+    var i = r.args.indexOf("--country")
+    return i !== -1 && String(r.args[i + 1] || "").toUpperCase() === String(code || "").toUpperCase()
+  }
+
+  onStateLoadedChanged: recordOutside()
+  onMaxTierChanged: recordOutside()
+  onCurrentPlaceChanged: recordOutside()
+  onCountriesLoadedChanged: recordOutside()
+
   Component.onCompleted: {
     // Owner-only, and fixed up on existing installs too: the file holds where
     // you've been connecting, which is nobody else's business on a shared box.
@@ -1442,6 +1532,7 @@ Item {
       if (exitCode !== 0) return
       var link = Model.parseActiveVpn(String(watchStdout.text || ""))
       var was = root.linkActive
+      var wasServer = root.linkServer
       root.linkActive = link.active
       root.linkServer = link.server
       root.linkDevice = link.device
@@ -1469,6 +1560,8 @@ Item {
           root.notify("VPN Disconnected \udb83\udfc6", "You're no longer protected.", "critical")
         root._expectDown = false
       }
+      root.noteOutsideConnect(link, was, wasServer)
+      root._linkPolled = true
       root.reconcile()
       root.autoReconcile()
       // The tunnel came up or went away behind our back (CLI in a terminal,
@@ -1706,6 +1799,8 @@ Item {
         actionStatusTimer.restart()
       } else {
         root.lastError = ""
+        var own = Model.parseConnected(out)
+        root._ownServer = own ? own.name : ""
         // The confirmation line, which is not always the first one: an expired
         // server list puts "Server list is outdated, updating..." ahead of it,
         // and that is not what the panel or the notification should report.

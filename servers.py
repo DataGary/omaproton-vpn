@@ -14,7 +14,11 @@ of the list, so you'd scroll past hundreds of near-identical entries before
 seeing a second city. One row per city is the choice a person actually wants
 to make.
 
+A city row is still only a summary, so a city can be opened into every server
+it holds, for the person who wants one machine in particular.
+
 Usage: servers.py <COUNTRY_CODE> [limit]   one country's cities, best-first
+       servers.py --city <CODE> <CITY>      every server in one city, best-first
        servers.py --cities                  every city worldwide, with lat/long,
                                             and the account's tier
        servers.py --locate <SERVER_NAME>    one server's city and coordinates
@@ -165,11 +169,44 @@ def locate(data, name):
     return {}
 
 
+def city_servers(data, code, city):
+    """Every connectable server in one city, best-first, in the same row shape
+    as the city list so the panel draws both with one component. The city is
+    matched the way the city list groups it, "Other" included."""
+    rows = []
+    check_status = status_known(data)
+    for s in data.get("LogicalServers") or []:
+        if not usable(s, check_status):
+            continue
+        if (s.get("ExitCountry") or "").upper() != code:
+            continue
+        if ((s.get("City") or "").strip() or "Other") != city:
+            continue
+        score = s.get("Score")
+        rows.append({
+            "city": city,
+            "name": s.get("Name") or "",
+            "load": s.get("Load"),
+            "tier": s.get("Tier"),
+            "score": score if score is not None else 9e9,
+            "tags": labels(s.get("Features") or 0),
+            "count": 1,
+        })
+    rows.sort(key=lambda r: (r["score"], r["load"] if r["load"] is not None else 999, r["name"]))
+    return rows
+
+
 def main():
     if len(sys.argv) < 2:
         print("[]")
         return
     data = read_cache()
+    if sys.argv[1] == "--city":
+        code = sys.argv[2].strip().upper() if len(sys.argv) > 2 else ""
+        city = sys.argv[3].strip() if len(sys.argv) > 3 else ""
+        rows = city_servers(data, code, city) if (data and code and city) else []
+        print(json.dumps(rows, separators=(",", ":")))
+        return
     if sys.argv[1] == "--cities":
         # MaxTier is the signed-in account's tier as of the client's last
         # fetch (0 is Free). `protonvpn info` doesn't print the plan, and this
