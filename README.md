@@ -281,6 +281,12 @@ click them, but they still put you somewhere, so the server they picked is
 recorded by name and city, and clicking it again takes you straight back.
 That top entry is also what Always On reconnects to.
 
+Connections made outside the widget land here too: a `protonvpn connect DE#4`
+in a terminal brings up a tunnel the widget can see, and it is recorded the
+same way, by server, city and country. A tunnel that was already up when the
+shell started is recorded as well, unless the top entry already names that
+server or its country, so a restart doesn't push a twin of it onto the list.
+
 ### Connections → Countries and cities
 
 Below that is the full country list, folded away behind its **COUNTRIES**
@@ -308,8 +314,15 @@ Inside a country:
 The widget shows one row per city rather than one per server on purpose. Large
 countries have thousands of servers and the nearest city would monopolise the
 whole list; you'd scroll past hundreds of near-identical entries before seeing
-a second city. When you pick a city, it connects to that city's best server; if
-you want a *specific* server, use the CLI: `protonvpn connect US-NY#12`.
+a second city. When you pick a city, it connects to that city's best server.
+
+To pick a *specific* server, open the city instead: a city with more than one
+server carries a **›** at the end of its row, and clicking it (or pressing `→`
+on the row) lists that city's servers, best first, each with its load and
+tags. A big city can hold hundreds, so the best hundred are shown and the
+filter box above them searches every one by name: type `123` for `DE#123`,
+then `Enter` connects to the first match. `←`, `Esc` or the back row return
+to the country's cities.
 
 Secure Core servers aren't listed under their exit country. They're reached
 through the Secure Core quick-connect row instead, since listing them here would
@@ -362,8 +375,8 @@ Everything in the panel is reachable without a mouse, and the keys are Vim's.
 | Key | What it does |
 | --- | --- |
 | `j` `k` or `↓` `↑` | Move through every section, top to bottom |
-| `l` or `→` | Open the selected country's city list, unfold a list from its header, or on the tab row move to Protection |
-| `h` or `←` | Back out to the country list, fold a list from its header, or on the tab row move to Connections |
+| `l` or `→` | Open the selected country's city list or city's server list, unfold a list from its header, or on the tab row move to Protection |
+| `h` or `←` | Back out one level (servers to cities, cities to countries), fold a list from its header, or on the tab row move to Connections |
 | `Enter` or `Space` | Activate: connect, flip a switch, open a picker, fold or unfold a list from its header |
 | `gg` / `G` | Jump to the top of the panel / the last row |
 | `{` / `}` | Jump to the previous / next section |
@@ -372,7 +385,7 @@ Everything in the panel is reachable without a mouse, and the keys are Vim's.
 | `zo` / `zc` | Unfold / fold that list |
 | `zR` / `zM` | Unfold / fold every list |
 | `gt` / `gT` | Next / previous tab, from anywhere in the panel |
-| `/` | Jump to the country filter, unfolding the list if it was folded |
+| `/` | Jump to the country filter, unfolding the list if it was folded; inside a city, to the server filter |
 | `e` | Edit the selected profile |
 | `q` | Close the panel |
 | `Esc` | Back out one level, then close the panel |
