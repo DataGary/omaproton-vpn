@@ -19,6 +19,7 @@ it holds, for the person who wants one machine in particular.
 
 Usage: servers.py <COUNTRY_CODE> [limit]   one country's cities, best-first
        servers.py --city <CODE> <CITY>      every server in one city, best-first
+       servers.py --servers <CODE>          every server in one country, best-first
        servers.py --cities                  every city worldwide, with lat/long,
                                             and the account's tier
        servers.py --locate <SERVER_NAME>    one server's city and coordinates
@@ -169,10 +170,11 @@ def locate(data, name):
     return {}
 
 
-def city_servers(data, code, city):
+def city_servers(data, code, city=None):
     """Every connectable server in one city, best-first, in the same row shape
     as the city list so the panel draws both with one component. The city is
-    matched the way the city list groups it, "Other" included."""
+    matched the way the city list groups it, "Other" included. Without a city,
+    every server in the country, which is what the profile editor offers."""
     rows = []
     check_status = status_known(data)
     for s in data.get("LogicalServers") or []:
@@ -180,11 +182,12 @@ def city_servers(data, code, city):
             continue
         if (s.get("ExitCountry") or "").upper() != code:
             continue
-        if ((s.get("City") or "").strip() or "Other") != city:
+        where = (s.get("City") or "").strip() or "Other"
+        if city is not None and where != city:
             continue
         score = s.get("Score")
         rows.append({
-            "city": city,
+            "city": where,
             "name": s.get("Name") or "",
             "load": s.get("Load"),
             "tier": s.get("Tier"),
@@ -205,6 +208,11 @@ def main():
         code = sys.argv[2].strip().upper() if len(sys.argv) > 2 else ""
         city = sys.argv[3].strip() if len(sys.argv) > 3 else ""
         rows = city_servers(data, code, city) if (data and code and city) else []
+        print(json.dumps(rows, separators=(",", ":")))
+        return
+    if sys.argv[1] == "--servers":
+        code = sys.argv[2].strip().upper() if len(sys.argv) > 2 else ""
+        rows = city_servers(data, code) if (data and code) else []
         print(json.dumps(rows, separators=(",", ":")))
         return
     if sys.argv[1] == "--cities":

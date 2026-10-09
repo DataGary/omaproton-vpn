@@ -72,6 +72,13 @@ Item {
   // One level further down: every server in one of that country's cities,
   // or "" while `servers` holds the country's cities.
   property string serversCity: ""
+
+  // Every server in one country, for the profile editor's Server row. Its
+  // own list and process, so editing a profile never disturbs the drill.
+  property var profileServers: []
+  property string profileServersCountry: ""
+  property bool profileServersLoading: false
+  property string _profileServersPending: ""
   property bool serversLoading: false
 
   // Every Proton city with coordinates, for the mini-map. From the client's
@@ -879,6 +886,20 @@ Item {
       ? ["python3", scriptPath, "--city", c, town]
       : ["python3", scriptPath, c, "80"]
     serversProcess.running = true
+  }
+
+  // A request arriving mid-run is queued, not dropped, so switching the
+  // editor's country twice in quick succession still lands on the last one.
+  function loadProfileServers(code) {
+    var c = String(code || "").trim().toUpperCase()
+    if (!installed || !/^[A-Z]{2}$/.test(c)) return
+    if (c === profileServersCountry && (profileServersLoading || profileServers.length > 0)) return
+    if (profileServersProcess.running) { _profileServersPending = c; return }
+    profileServersCountry = c
+    profileServers = []
+    profileServersLoading = true
+    profileServersProcess.command = ["python3", scriptPath, "--servers", c]
+    profileServersProcess.running = true
   }
 
   function loadCities(force) {
@@ -1710,6 +1731,28 @@ Item {
         root.servers = JSON.parse(String(serversStdout.text || "[]"))
       } catch (e) {
         root.servers = []
+      }
+    }
+  }
+
+  Process {
+    id: profileServersProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: profileServersStdout; waitForEnd: true }
+    onExited: function(exitCode) {
+      root.profileServersLoading = false
+      var list = []
+      try {
+        list = exitCode === 0 ? JSON.parse(String(profileServersStdout.text || "[]")) : []
+      } catch (e) {
+        list = []
+      }
+      root.profileServers = Array.isArray(list) ? list : []
+      if (root._profileServersPending !== "") {
+        var next = root._profileServersPending
+        root._profileServersPending = ""
+        root.loadProfileServers(next)
       }
     }
   }

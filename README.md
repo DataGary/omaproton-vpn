@@ -244,15 +244,18 @@ Click **New profile** and the editor opens in place of the list:
 | --- | --- |
 | Name | Whatever you'd call it, up to 32 characters |
 | Colour | One of the theme's seven names: accent, red, yellow, green, cyan, blue, magenta |
-| Where | Fastest, Random, any country, or the exact server you're on right now |
+| Where | Fastest, Random or any country |
+| Server | Once a country is chosen: its fastest, or any one server in it, searchable by name or city |
 | Feature | None, P2P, Secure Core or Tor |
 
 A new profile starts where you are: the top of Recent, which is the server or
-country you last asked for. If that was a specific server, it's offered as an
-option under **Where**; pick a country instead and you get the fastest server
-there each time. The feature is added on top of a country ("fastest P2P in
-Switzerland"), and greyed out for a named server, because the CLI ignores every
-flag once a server is named.
+country you last asked for. If that was a specific server, **Where** shows its
+country and **Server** shows the server. Leave **Server** on the country's
+fastest and you get whichever server is best there each time; pick one from
+its list (type `393` for `DE#393`, or `Frankfurt` for every server there) and
+the profile always lands on that machine. The feature is added on top of a
+country ("fastest P2P in Switzerland"), and greyed out for a named server,
+because the CLI ignores every flag once a server is named.
 
 The colour is stored by name, not by value. Switch from Tokyo Night to Jade and
 every profile is repainted in Jade's idea of blue or magenta on its own. That's

@@ -97,6 +97,20 @@ function isSecureCore(name) {
   return /^(CH|IS|SE)-[A-Z]{2}/i.test(String(name || "").trim())
 }
 
+// The country a server exits in, from its name alone: "DE#4" -> DE,
+// "US-NY#12" -> US, "US-CO#21-TOR" -> US, and a Secure Core "CH-US#3" exits
+// in US. The exit code has to be exactly two letters before the "#", or
+// Proton's free Swiss servers ("CH-FREE#11") would read as France. Every name
+// in Proton's list follows this, so the profile editor can show a saved
+// server under its country without a lookup.
+function serverCountry(name) {
+  var n = String(name || "").trim().toUpperCase()
+  var sc = n.match(/^(?:CH|IS|SE)-([A-Z]{2})#/)
+  if (sc) return sc[1]
+  var m = n.match(/^([A-Z]{2})(?:[-#]|$)/)
+  return m ? m[1] : ""
+}
+
 // Secure Core servers are named for both hops: "CH-US#3" enters Switzerland
 // and exits US server 3. Show that as a route, "CH → US#3". Only CH, IS and
 // SE are entry countries, which keeps regional names like "US-TX#40" as-is.

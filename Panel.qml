@@ -166,9 +166,21 @@ Panel {
   // "random", "country:CC" or "server:NAME"; `serverOption` is the dropdown
   // row for a named server, which the country list can't supply.
   property var draft: null
+  // The country the draft points into, for a country or a named server, or
+  // "". Where shows the country and Server the machine in it, so a server
+  // profile reads as both.
+  readonly property string draftCountry: {
+    if (draft === null) return ""
+    var w = String(draft.where || "")
+    if (w.indexOf("country:") === 0) return w.slice(8).toUpperCase()
+    if (w.indexOf("server:") === 0) return Model.serverCountry(w.slice(7))
+    return ""
+  }
+  onDraftCountryChanged: if (draftCountry !== "") vpn.loadProfileServers(draftCountry)
+  readonly property string draftServer: draft !== null && String(draft.where).indexOf("server:") === 0 ? draft.where : ""
   // The buttons are one row of the walk: h and l pick Save, Cancel or
   // Delete along it, the way they pick a colour swatch.
-  readonly property var editorRows: draft === null ? [] : ["name", "color", "where", "feature", "buttons"]
+  readonly property var editorRows: draft === null ? [] : ["name", "color", "where", "server", "feature", "buttons"]
   readonly property string editorRow: draft !== null && editorIndex < editorRows.length ? editorRows[editorIndex] : ""
   readonly property var editorButtons: draft === null ? [] : (draft.isNew ? ["save", "cancel"] : ["save", "cancel", "delete"])
   property int editorButtonIndex: 0
@@ -185,11 +197,73 @@ Panel {
       { value: "", label: "Fastest", description: "Best server for your location" },
       { value: "random", label: "Random", description: "Any available server" }
     ]
-    if (draft !== null && draft.serverOption) list.push(draft.serverOption)
+    // A saved server whose country isn't in the list (countries still
+    // loading) keeps its own row, so the dropdown never shows blank.
+    if (draft !== null && draft.serverOption && !countryListed(draftCountry)) list.push(draft.serverOption)
     for (var i = 0; i < vpn.countries.length; i++) {
       list.push({ value: "country:" + vpn.countries[i].code, label: vpn.countries[i].name })
     }
     return list
+  }
+
+  function countryListed(code) {
+    for (var i = 0; i < vpn.countries.length; i++) if (vpn.countries[i].code === code) return true
+    return false
+  }
+
+  // What the Where row shows: a server profile shows its country there.
+  readonly property string whereValue: {
+    if (draft === null) return ""
+    if (draftServer !== "" && countryListed(draftCountry)) return "country:" + draftCountry
+    return draft.where
+  }
+
+  // Every server in the draft's country, best-first, searchable by name or
+  // city. "" is the country's fastest, which is what the Where row alone
+  // has always meant.
+  readonly property var serverOptions: {
+    if (draftCountry === "") return [{ value: "", label: "Pick a country first" }]
+    var list = [{ value: "", label: "Fastest in " + vpn.countryName(draftCountry), description: "Proton picks the server" }]
+    // The saved server stays selectable while the list loads, or is gone.
+    var saved = draftServer
+    var seen = false
+    if (vpn.profileServersCountry === draftCountry) {
+      for (var i = 0; i < vpn.profileServers.length; i++) {
+        var s = vpn.profileServers[i]
+        var bits = [s.city]
+        if (s.load !== undefined && s.load !== null) bits.push(s.load + "%")
+        if (s.tier === 0 && !vpn.freePlan) bits.push("Free")
+        if ((s.tags || []).length > 0) bits.push(s.tags.join(", "))
+        list.push({ value: "server:" + s.name, label: s.name, description: bits.join(" · "), city: s.city })
+        if ("server:" + s.name === saved) seen = true
+      }
+    }
+    if (saved !== "" && !seen && draft.serverOption)
+      list.splice(1, 0, { value: saved, label: saved.slice(7), description: draft.serverOption.label })
+    return list
+  }
+
+  // Picking a server stores the same title and subtitle a Recent row for it
+  // carries: the city, then "Country · NAME".
+  function pickDraftServer(v) {
+    if (draft === null || draftCountry === "") return
+    var d = Object.assign({}, draft)
+    if (v === "") {
+      d.where = "country:" + draftCountry
+      d.serverOption = null
+    } else {
+      var city = ""
+      for (var i = 0; i < serverOptions.length; i++) if (serverOptions[i].value === v) city = serverOptions[i].city || ""
+      var n = v.slice(7)
+      d.where = v
+      d.feature = ""
+      d.serverOption = {
+        value: v,
+        label: city !== "" ? city : (draft.serverOption && draft.where === v ? draft.serverOption.label : n),
+        description: [vpn.countryName(draftCountry), n].filter(function(t) { return t !== "" }).join(" · ")
+      }
+    }
+    draft = d
   }
 
   function whereOf(args) {
@@ -280,6 +354,7 @@ Panel {
     if (row === "name") nameField.forceActiveFocus()
     else if (row === "color") cycleColor(1)
     else if (row === "where") whereRow.toggle()
+    else if (row === "server") { if (profileServerRow.enabled) profileServerRow.toggle() }
     else if (row === "feature") { if (featureRow.enabled) featureRow.toggle() }
     else if (row === "buttons") {
       if (editorButton === "save") saveDraft()
@@ -291,7 +366,7 @@ Panel {
   function hoverEditorButton(index) {
     if (!pointerMoved) return
     editorButtonIndex = index
-    setCursor("editor", 4)
+    setCursor("editor", 5)
   }
 
   function stepEditorButton(step) {
@@ -893,7 +968,7 @@ Panel {
     // "New profile" is the last child of its column, after the Repeater.
     if (focusSection === "profiles" && i >= vpn.profiles.length && column) i = column.children.length - 1
     // The editor's buttons share one row, the last child of its column.
-    if (focusSection === "editor" && i === 4 && column) i = column.children.length - 1
+    if (focusSection === "editor" && i === 5 && column) i = column.children.length - 1
     // The Protection column carries the Account header and rows after its
     // switches; the sign-out row is its last child wherever the cursor for it
     // has ended up.
@@ -1072,7 +1147,7 @@ Panel {
       // person can't see instead of moving inside the one they opened.
       blocked: filterField.activeFocus || serverFilterField.activeFocus || usernameField.activeFocus || nameField.activeFocus
                || splitModeRow.popupOpen || splitAppsRow.popupOpen
-               || whereRow.popupOpen || featureRow.popupOpen
+               || whereRow.popupOpen || profileServerRow.popupOpen || featureRow.popupOpen
       onMoveRequested: function(dx, dy) {
         // A dialog with the screen dimmed behind it owns the keyboard, or the
         // cursor would be moving around underneath it unseen.
@@ -1873,7 +1948,7 @@ Panel {
                   id: whereRow
                   width: parent.width
                   label: "Where"
-                  value: root.draft !== null ? root.draft.where : ""
+                  value: root.whereValue
                   options: root.whereOptions
                   placeholderText: "Search countries..."
                   emptyText: "No countries match"
@@ -1881,7 +1956,33 @@ Panel {
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onHovered: function(on) { if (on) root.setCursorFromHover("editor", 2) }
-                  onChanged: function(v) { root.setDraft("where", v) }
+                  // A new place drops any server picked in the old one.
+                  onChanged: function(v) {
+                    if (v === root.whereValue) return
+                    var d = Object.assign({}, root.draft)
+                    d.where = v
+                    d.serverOption = null
+                    root.draft = d
+                  }
+                }
+
+                // One machine in the chosen country, for a profile that should
+                // always land on the same server. Searches by name or city.
+                SearchableDropdown {
+                  id: profileServerRow
+                  width: parent.width
+                  label: "Server"
+                  value: root.draftServer
+                  options: root.serverOptions
+                  enabled: root.draftCountry !== ""
+                  opacity: enabled ? 1.0 : 0.5
+                  placeholderText: "Search servers or cities..."
+                  emptyText: vpn.profileServersLoading ? "Loading servers…" : "No servers match"
+                  hasCursor: root.cursorActive && root.editorRow === "server"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onHovered: function(on) { if (on) root.setCursorFromHover("editor", 3) }
+                  onChanged: function(v) { root.pickDraftServer(v) }
                 }
 
                 // A named server takes precedence over every flag in the CLI,
@@ -1897,7 +1998,7 @@ Panel {
                   hasCursor: root.cursorActive && root.editorRow === "feature"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  onHovered: function(on) { if (on) root.setCursorFromHover("editor", 3) }
+                  onHovered: function(on) { if (on) root.setCursorFromHover("editor", 4) }
                   onChanged: function(v) { root.setDraft("feature", v) }
                 }
 
@@ -1905,7 +2006,8 @@ Panel {
                 // which destroys a plain binding; these put the draft back in
                 // charge, so reopening the editor shows the profile's real
                 // settings and not the last thing clicked.
-                Binding { target: whereRow; property: "value"; value: root.draft !== null ? root.draft.where : "" }
+                Binding { target: whereRow; property: "value"; value: root.whereValue }
+                Binding { target: profileServerRow; property: "value"; value: root.draftServer }
                 Binding { target: featureRow; property: "value"; value: root.draft !== null ? root.draft.feature : "" }
 
                 Row {
