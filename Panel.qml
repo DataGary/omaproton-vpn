@@ -96,7 +96,7 @@ Panel {
   // ones by Proton's score are shown, and the filter reaches the rest by
   // name, which is how someone after one particular server knows it.
   property string serverFilter: ""
-  readonly property int cityRowLimit: 100
+  readonly property int cityRowLimit: 10
   readonly property var cityMatches: {
     if (!drilledCity) return []
     var q = serverFilter.trim().toUpperCase()
@@ -2551,7 +2551,10 @@ Panel {
               if (n === 0) return "No servers available"
               var shown = root.shownServers.length
               var all = n + (n === 1 ? " server" : " servers")
-              if (root.serverFilter.trim() !== "") return root.cityMatches.length + " of " + all + " match"
+              if (root.serverFilter.trim() !== "") {
+                var m = root.cityMatches.length
+                return m + " of " + all + " match" + (shown < m ? ", best " + shown + " shown" : "")
+              }
               return shown < n ? all + ", best " + shown + " shown" : all
             }
             return n > 0 ? n + (n === 1 ? " city" : " cities") + " available" : "Let Proton choose"

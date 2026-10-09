@@ -319,7 +319,7 @@ a second city. When you pick a city, it connects to that city's best server.
 To pick a *specific* server, open the city instead: a city with more than one
 server carries a **›** at the end of its row, and clicking it (or pressing `→`
 on the row) lists that city's servers, best first, each with its load and
-tags. A big city can hold hundreds, so the best hundred are shown and the
+tags. A big city can hold hundreds, so only the best ten are shown and the
 filter box above them searches every one by name: type `123` for `DE#123`,
 then `Enter` connects to the first match. `←`, `Esc` or the back row return
 to the country's cities.
